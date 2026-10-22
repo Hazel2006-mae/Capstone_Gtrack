@@ -83,10 +83,49 @@ class WebFeatureCoverageTest extends TestCase
         ]);
 
         $this->actingAs($admin, 'admin');
-        $this->get('/dashboard')->assertOk();
+        $this->get('/dashboard')->assertOk()->assertSee('NO SOS ALERT');
         $this->get('/tracking')->assertOk();
         $this->get('/activity')->assertOk();
         $this->get(route('students.history', $student))->assertOk();
+    }
+
+    public function test_dashboard_lists_only_active_students_and_provides_batch_filters(): void
+    {
+        $admin = $this->createAdmin('MAIN001', 'main');
+        $activeStudent = $this->createStudent();
+        $activeStudent->update(['status' => true]);
+        Notification::create([
+            'student_id' => $activeStudent->id,
+            'type' => 'sos',
+            'message' => 'Emergency',
+            'read' => false,
+            'status' => 'pending',
+        ]);
+        BatchClass::firstOrCreate(['name' => '2027']);
+        Student::create([
+            'student_id' => 'STU2027002',
+            'name' => 'Taylor Offline',
+            'first_name' => 'Taylor',
+            'last_name' => 'Offline',
+            'email' => 'taylor@example.com',
+            'class' => '2027',
+            'gender' => 'Male',
+            'contact' => '09987654321',
+            'status' => false,
+        ]);
+
+        $this->actingAs($admin, 'admin')
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Student List Active')
+            ->assertSee('Jamie')
+            ->assertSee('Student')
+            ->assertSee('2026')
+            ->assertSee('value="2027"', false)
+            ->assertSee('On')
+            ->assertSee('Current SOS Alerts')
+            ->assertSee('SOS ALERT')
+            ->assertDontSee('Taylor Offline');
     }
 
     public function test_management_index_views_render_for_main_admin(): void
@@ -97,6 +136,53 @@ class WebFeatureCoverageTest extends TestCase
         $this->get(route('students.index'))->assertOk();
         $this->get(route('classes.index'))->assertOk();
         $this->get(route('admins.index'))->assertOk();
+    }
+
+    public function test_notification_categories_render_on_separate_screens(): void
+    {
+        $admin = $this->createAdmin('EDU001', 'education');
+
+        $this->actingAs($admin, 'admin');
+
+        $this->get('/notifications/alerts')
+            ->assertOk()
+            ->assertSee('SOS Alerts')
+            ->assertDontSee('Student Chats')
+            ->assertSee(route('notifications.screen', ['screen' => 'alerts']), false)
+            ->assertSee('Emergency Alerts');
+
+        $this->get('/notifications/messages')
+            ->assertOk()
+            ->assertSee('Student Chats')
+            ->assertDontSee('No current')
+            ->assertSee(route('notifications.screen', ['screen' => 'messages']), false)
+            ->assertSee('Student Messages');
+
+        $this->get('/notifications/broadcasts')
+            ->assertOk()
+            ->assertSee('Compose New Broadcast')
+            ->assertSee('Broadcast Notifications History')
+            ->assertDontSee('Student Chats')
+            ->assertSee(route('notifications.screen', ['screen' => 'broadcasts']), false)
+            ->assertSee('Broadcast Notifications');
+
+        $this->get('/notifications?tab=sos')
+            ->assertOk()
+            ->assertSee('SOS Alerts');
+
+        $this->get('/notifications?tab=broadcast')
+            ->assertOk()
+            ->assertSee('Compose New Broadcast');
+
+        foreach (['alerts', 'messages', 'broadcasts'] as $screen) {
+            $view = file_get_contents(resource_path("views/{$screen}.blade.php"));
+
+            $this->assertIsString($view);
+            $this->assertStringContainsString("@extends('layouts.app')", $view);
+            $this->assertStringContainsString('<style>', $view);
+            $this->assertStringNotContainsString("@extends('notifications')", $view);
+            $this->assertStringNotContainsString('aria-label="Notification sections"', $view);
+        }
     }
 
     public function test_admin_can_create_account_and_cannot_delete_self(): void
@@ -179,13 +265,6 @@ class WebFeatureCoverageTest extends TestCase
             'status' => 'resolved',
             'video_url' => 'https://example.test/video.mp4',
         ]);
-        $blackoutArchive = Notification::create([
-            'student_id' => $student->id,
-            'type' => 'blackout',
-            'message' => 'Resolved blackout.',
-            'read' => true,
-            'status' => 'resolved',
-        ]);
 
         $this->actingAs($staff, 'admin');
         $this->get('/notifications?tab=student')->assertOk();
@@ -212,9 +291,6 @@ class WebFeatureCoverageTest extends TestCase
             ->assertSessionHas('success');
         $this->assertDatabaseMissing('notifications', ['id' => $sosArchive->id]);
 
-        $this->post('/notifications/delete-all-blackout-archives')
-            ->assertSessionHas('success');
-        $this->assertDatabaseMissing('notifications', ['id' => $blackoutArchive->id]);
     }
 
     public function test_staff_can_delete_only_their_conversation_and_non_educator_cannot_reply(): void

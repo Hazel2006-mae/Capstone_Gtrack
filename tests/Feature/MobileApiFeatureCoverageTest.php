@@ -78,12 +78,30 @@ class MobileApiFeatureCoverageTest extends TestCase
         $this->assertTrue($student->fresh()->status);
         $this->assertSame(63, $student->fresh()->battery_level);
         $this->assertSame('Weak', $student->fresh()->signal_status);
+        Notification::create([
+            'student_id' => $student->id,
+            'type' => 'sos',
+            'message' => 'Emergency',
+            'read' => false,
+            'status' => 'pending',
+        ]);
 
         $this->getJson('/api/dashboard/stats')
             ->assertOk()
             ->assertJsonPath('onlineCount', 1)
             ->assertJsonPath('offlineCount', 0)
-            ->assertJsonPath('students.0.student_id', $student->student_id);
+            ->assertJsonPath('students.0.student_id', $student->student_id)
+            ->assertJsonPath('students.0.first_name', 'Jamie')
+            ->assertJsonPath('students.0.last_name', 'Student')
+            ->assertJsonPath('currentSosAlerts.0.last_name', 'Student')
+            ->assertJsonPath('currentSosAlerts.0.first_name', 'Jamie')
+            ->assertJsonPath('currentSosAlerts.0.class', '2026')
+            ->assertJsonPath('currentSosAlerts.0.alert', 'SOS ALERT')
+            ->assertJsonStructure([
+                'students' => [
+                    ['last_sync_at'],
+                ],
+            ]);
     }
 
     public function test_status_endpoint_returns_latest_location_and_student_online_state(): void
@@ -175,6 +193,13 @@ class MobileApiFeatureCoverageTest extends TestCase
             'message' => 'I need help finding the pickup point.',
         ]);
 
+        $this->postJson('/api/notifications/send', [
+            'student_id' => $student->student_id,
+            'target' => 'blackout',
+            'message' => 'This alert type is no longer supported.',
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('target');
+
         $this->getJson('/api/notifications/'.$student->student_id)
             ->assertOk()
             ->assertJsonPath('success', true)
@@ -224,7 +249,7 @@ class MobileApiFeatureCoverageTest extends TestCase
         $initialResponse = $this->postJson('/api/notifications/send', [
             'student_id' => $student->student_id,
             'target' => 'sos',
-            'message' => 'Emergency - video unavailable',
+            'message' => 'Emergency - battery is low and video unavailable',
         ])->assertOk()
             ->assertJsonPath('success', true);
 
